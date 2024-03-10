@@ -203,8 +203,20 @@ int main(int argc, char* argv[]) {
 
             // send the lower element
             if (send_started && !send_old_elements_first) {
+                // send the lower element
                 if (!queue_0->empty() && !queue_1->empty()) {
                     if (queue_0->front() < queue_1->front()) {
+                        to_be_send = queue_0->front();
+                        queue_0->pop();
+                        sent_from_queue_0++;
+                    } else {
+                        to_be_send = queue_1->front();
+                        queue_1->pop();
+                        sent_from_queue_1++;
+                    }
+                } else {
+                    // send the first element from an non-empty queue
+                    if (!queue_0->empty()) {
                         to_be_send = queue_0->front();
                         queue_0->pop();
                         sent_from_queue_0++;
