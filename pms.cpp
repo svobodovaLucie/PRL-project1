@@ -1,23 +1,16 @@
-// std::queue
-
-
-// algo pro prostredni procesory
-// while vsechny hodnoty jeste nebyly zpracovany do
-    // cekej na zpravu od predchoziho procesu a uloz hodnotu do konkretni fronty
-    // if fronty jsou dostatecne naplneny then
-        // nastav priznak zapoceti zpracovani
-    // end if
-    // if je mozne zacit se zpracovavanim then
-        // vyber mensi hondotu z obou front a odesli ji nasledujicimu procesu
-    // end if 
-// end while
-
-// posledni procesor ma v podstate vse stene az na to, ze hodnoty radi do finalni posloupnosti
-
-// komunikace procesu
-// tagy tag_pipeline_1, tag_pipeline_2, ktere urcuji, do jake linky prijata hodnota patri
-// aneb do jake fronty cilovy proces hodnotu ulozi
-
+/**
+ * @file      pms.cpp
+ *
+ * @author    Lucie Svobodova \n
+ *            xsvobo1x@stud.fit.vutbr.cz \n
+ *            Faculty of Information Technology \n
+ *            Brno University of Technology
+ * 
+ * @date      10.3.2024 (created)
+ *
+ * @brief     Implementation of Pipeline Merge Sort algorithm using the Open MPI library.
+ *            Project for the course Parallel and Distributed Algorithms (PRL) on FIT BUT, 2024.
+ */
 
 #include <iostream>
 #include <fstream>
@@ -27,22 +20,23 @@
 
 #include "mpi.h"
 
-#define MPI_ROOT_RANK   0
-#define PIPELINE_TAG_0  0
-#define PIPELINE_TAG_1  1
+#define MPI_ROOT_RANK   0   // constant used for root rank
+#define PIPELINE_TAG_0  0   // constant that indicates that the element should be added to the queue 0
+#define PIPELINE_TAG_1  1   // constant that indicates that the element should be added to the queue 1
 
-// Function parses input file "numbers" and returns a pointer to a queue containing those numbers.
-// Returns pointer to a queue filled with numbers from input.
-// Returns nullptr if the binary file could not be open.
+/**
+ * Function parses the binary file with filename "numbers" and adds the numbers to the input queue.
+ * @return pointer to the input queue, or nullptr in case of error when opening the binary file.
+ */
 std::queue<uint8_t>* parse() {
     // open the binary file "numbers"
     std::ifstream file("numbers", std::ios::in | std::ios::binary);
     if (!file.is_open()) {
-        std::cerr << "Failed to open the file." << std::endl;
+        std::cerr << "Failed to open the file numbers." << std::endl;
         return nullptr;
     }
 
-    // allocate a new queue on the heap
+    // create the input queue
     std::queue<uint8_t>* input_queue = new std::queue<uint8_t>();
     
     // push the numbers from the input file into the queue and print the contents
@@ -60,24 +54,64 @@ std::queue<uint8_t>* parse() {
     return input_queue;
 }
 
-// Main function
+/**
+ * Function prints the queue and pops all elements from it.
+ * @param queue pointer to the queue
+ */
+void print_queue(std::queue<uint8_t> *queue) {
+    // print and pop all elements from the queue
+    while (!queue->empty()) { 
+        std::cout << static_cast<int>(queue->front()) << std::endl;
+        queue->pop();
+    }
+}
+
+/**
+ * Function prints the lower element from two queues.
+ * If any queue is empty, function prints first element from the non-empty queue.
+ * @param queue_0 pointer to the first queue
+ * @param queue_1 pointer to the second queue
+ */
+void print_lower_number(std::queue<uint8_t> *queue_0, std::queue<uint8_t> *queue_1) {
+    // print the lower number if none of the queues is empty
+    if (!queue_0->empty() && !queue_1->empty()) {
+        if (queue_0->front() < queue_1->front()) {
+            std::cout << static_cast<int>(queue_0->front()) << std::endl;
+            queue_0->pop();
+        } else {
+            std::cout << static_cast<int>(queue_1->front()) << std::endl;
+            queue_1->pop();
+        }
+    // print an element from queue_0 if queue_1 is empty
+    } else if (!queue_0->empty()) {
+        std::cout << static_cast<int>(queue_0->front()) << std::endl;
+        queue_0->pop();
+    // print an element from queue_1 if queue_0 is empty
+    } else if (!queue_1->empty()) {
+        std::cout << static_cast<int>(queue_1->front()) << std::endl;
+        queue_1->pop();
+    }
+}
+
+/**
+ * Main function
+ */
 int main(int argc, char* argv[]) {
 
-    // Initialize MPI
+    // initialize MPI
     MPI_Init(&argc, &argv);
 
-    // Get number of processors
+    // get the number of ranks
     int num_of_ranks;
     MPI_Comm_size(MPI_COMM_WORLD, &num_of_ranks);
 
-    // Get the number of the current processor (rank)
+    // get the current rank id
     int rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
+    // root rank parses the input file and computes the number of elements to be sorted
     int num_of_elements;
     std::queue<uint8_t>* input_queue;
-    
-    // Parse the input file and get the number of elements to be sorted
     if (rank == MPI_ROOT_RANK) {
         // create an input queue 
         input_queue = parse();
@@ -87,229 +121,197 @@ int main(int argc, char* argv[]) {
 
         // get the number of elements in the queue
         num_of_elements =input_queue->size();
-        // std::cout << rank << ": Number of elements: " << num_of_elements << std::endl;
+
+        // handle the scenario when there is only one process
+        if (num_of_ranks == 1) {
+            // print the input queue
+            print_queue(input_queue);
+            // delete the input queue
+            delete input_queue;
+            // finalize MPI and return
+            MPI_Finalize();
+            return 0;
+        }
     }
 
-    // Broadcast the number of elements to be sorted
+    // broadcast the number of elements to be sorted
     MPI_Bcast(&num_of_elements, 1, MPI_INT, MPI_ROOT_RANK, MPI_COMM_WORLD);
 
-    // The job that root rank does P(0)
+    /* ************************************ Processor P(0) ************************************ */
+    // processing routine for the root rank (0)
     if (rank == MPI_ROOT_RANK) {
-        // std::cout << "NR:" << num_of_elements << std::endl;
-
         int tag; 
-        // Process the queue
+        // process the input queue
         for (size_t i = 0; i < num_of_elements; i++) {
-
-            // Send a number to the first pipeline
-            // std::cout << rank << ": sending: " << static_cast<int>(input_queue->front()) << ", with tag: " << (i&1) << ", to rank: " << (rank+1) << std::endl;
-            
+            // send the elements with tags 0,1,0,1,...
             MPI_Send(&(input_queue->front()), 1, MPI_BYTE, 1, (i & 1), MPI_COMM_WORLD);
             input_queue->pop();
         }
-
-        // delete the dynamically allocated queue
-        // std::cout << rank << ": deleting input queue" << std::endl;
+        // delete the input queue when all elements are send
         delete input_queue;
     } 
-    // The processors P(1) - P(n-1)
+
+    /* ******************************** Processors P(1) - P(n-2) ******************************** */
+    // processing routine for ranks 1 - (n-2)
     else if (rank != (num_of_ranks - 1)) {
-        // Create two queues (the size depends on the rank)
-        // TODO may the size be bigger than the value depending on the rank? Like may it be the number of all numbers?
-        // TODO maybe just create statically allocated array with num_of_elements elements
+        // queues 0 and 1
         std::queue<uint8_t>* queue_0 = new std::queue<uint8_t>();
         std::queue<uint8_t>* queue_1 = new std::queue<uint8_t>();
-
+        // number of received elements
+        int num_of_recv_elements = 0;
+        // buffer for the received value
+        uint8_t recv_value;
+        // minimal size of queue_0 to start processing the elements
+        int min_num_of_elements_in_queue = (1 << (rank-1));
+        // number of sent elements
+        int num_of_sent_elements = 0;
+        // element to be sent to the next rank
         uint8_t to_be_send;
-        uint8_t value;
-        int recv_in_queue_0 = 0;
-        int recv_in_queue_1 = 0;
-        int sent = 0;
-        int recv = 0;
+        // flag indicating that there are enough elements in the queues to start sending
         bool send_started = false;
+        // MPI message status used to determine the message tag
         MPI_Status status;
-        int max_size = (1 << (rank - 1));
-        bool idk = false;
-        int qSel = -1;
+        // number of elements sent from queue_0 and queue_1
+        int sent_from_queue_0 = 0;
+        int sent_from_queue_1 = 0;
+        // maximal number of elements that can be sent from a queue
+        int max_sent_from_queue = (1 << (rank - 1));
+        // flag indicating whether older elements should be sent first
+        bool send_old_elements_first = false;
 
-        while (sent < num_of_elements) {
-
-            if (recv != num_of_elements) {
-                MPI_Recv(&value, 1, MPI_BYTE, (rank-1), MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-                // std::cout << rank << ": received: " << static_cast<int>(value) << ", tag: " << status.MPI_TAG << std::endl;
-                recv++;
-
+        // send all received elements forward
+        while (num_of_sent_elements < num_of_elements) {
+            
+            // receive the message
+            if (num_of_recv_elements != num_of_elements) {
+                MPI_Recv(&recv_value, 1, MPI_BYTE, (rank-1), MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+                num_of_recv_elements++;
+                
+                // push the received value to the corresponding queue based on the message tag
                 if (status.MPI_TAG == PIPELINE_TAG_0) {
-                    queue_0->push(value);
-                    // recv_in_queue_0++;
+                    queue_0->push(recv_value);
                 } else {
-                    queue_1->push(value);
-                    // recv_in_queue_1++;
+                    queue_1->push(recv_value);
                 }
             }
-            // i++;
 
-            // std::cout << rank << ": Inside: " << static_cast<int>(value) << ", queue_0->front(): " << static_cast<int>(queue_0->front()) <<  std::endl;
-        
-            // check if something could be sended            
-            if (!send_started && (queue_0->size() >= (1 << (rank-1))) && (!queue_1->empty())) {
+            // check if sending can be started         
+            if (!send_started && 
+                (queue_0->size() >= min_num_of_elements_in_queue) && (!queue_1->empty())) {
                 send_started = true;
             }
 
-            if (send_started && !idk) {
+            // send the lower element
+            if (send_started && !send_old_elements_first) {
                 if (!queue_0->empty() && !queue_1->empty()) {
                     if (queue_0->front() < queue_1->front()) {
                         to_be_send = queue_0->front();
                         queue_0->pop();
-                        qSel = 0;
+                        sent_from_queue_0++;
                     } else {
                         to_be_send = queue_1->front();
                         queue_1->pop();
-                        qSel = 1;
+                        sent_from_queue_1++;
                     }
                 }
 
-                // send
-                int queue_to_be_send_to = ((sent & (1 << rank)) ? 1 : 0);
-                // std::cout << rank << ": sending: " << static_cast<int>(to_be_send) << ", with tag: " << queue_to_be_send_to << ", to rank: " << (rank+1) << std::endl;
+                // determine the queue to send the element to and use it as message tag
+                int queue_to_be_send_to = ((num_of_sent_elements & (1 << rank)) ? 1 : 0);
+                // send the message
                 MPI_Send(&to_be_send, 1, MPI_BYTE, (rank+1), queue_to_be_send_to, MPI_COMM_WORLD);
-                sent++;
+                num_of_sent_elements++;
 
-                if (qSel == 0) {
-                    recv_in_queue_0++;
-                } else {
-                    recv_in_queue_1++;
+                // check if the older elements should be sent first
+                if ((sent_from_queue_0) == max_sent_from_queue || (sent_from_queue_1) == max_sent_from_queue) {
+                    send_old_elements_first = true;
                 }
 
-                if ((recv_in_queue_0) == max_size || (recv_in_queue_1) == max_size) {
-                    idk = true;
-                }
-
-            } else if (idk) {
-                // old tuple has to be sent first
-                if (recv_in_queue_0 < max_size) {
-                    // std::cout << "0" << std::endl;
+            // ahndle the case when older elements should be sent first
+            } else if (send_old_elements_first) {
+                // send an element from the queue if not already sent the maximal number of elements
+                if (sent_from_queue_0 < max_sent_from_queue) {
                     to_be_send = queue_0->front();
                     queue_0->pop();
-                    recv_in_queue_0++;
-                } else if (recv_in_queue_1 < max_size) {
-                    // std::cout << "1" << std::endl;
+                    sent_from_queue_0++;
+                } else if (sent_from_queue_1 < max_sent_from_queue) {
                     to_be_send = queue_1->front();
                     queue_1->pop();
-                    recv_in_queue_1++;
+                    sent_from_queue_1++;
                 }
-                // } else {
-                //     // std::cout << "?" << std::endl;
-                // }
-                if (recv_in_queue_0 >= max_size && recv_in_queue_1 >= max_size) {
-                    // std::cout << "2" << std::endl;
-                    recv_in_queue_0 = 0;
-                    recv_in_queue_1 = 0;
-                    idk = false;
-                } 
-                // else {
-                //     std::cout << "!" << std::endl;
-                // }
 
-                // send
-                int queue_to_be_send_to = ((sent & (1 << rank)) ? 1 : 0);
-                // std::cout << rank << ": sending in idk: " << static_cast<int>(to_be_send) << ", with tag: " << queue_to_be_send_to << ", to rank: " << (rank+1) << std::endl;
+                // reset counters and flags if all queues have sent all old elements
+                if (sent_from_queue_0 >= max_sent_from_queue && sent_from_queue_1 >= max_sent_from_queue) {
+                    sent_from_queue_0 = 0;
+                    sent_from_queue_1 = 0;
+                    send_old_elements_first = false;
+                } 
+
+                // determine the queue to send the element to and use it as message tag
+                int queue_to_be_send_to = ((num_of_sent_elements & (1 << rank)) ? 1 : 0);
+                // send the message
                 MPI_Send(&to_be_send, 1, MPI_BYTE, (rank+1), queue_to_be_send_to, MPI_COMM_WORLD);
-                sent++;
+                num_of_sent_elements++;
             }
         }
-        
-        // prevent memleak by deleting the queue
-        // std::cout << rank << ": deleting queues" << std::endl;
+        // delete the queues
         delete queue_0;
         delete queue_1;
     }
     
-    // Last processor P(n-1)
+    /* *********************************** Processor P(n-1) *********************************** */
+    // routine of the last rank (n-1)
     else {
-        // this rank has also queues but it does not send it to any process but it just prints it
+        // queues 0 and 1
         std::queue<uint8_t>* queue_0 = new std::queue<uint8_t>();
         std::queue<uint8_t>* queue_1 = new std::queue<uint8_t>();
-
-        uint8_t to_be_send;
-        uint8_t value;
-        // int tag;
-        int sent = 0;
-        // int i = 0;
-        int recv = 0;
-        bool set = false;
+        // number of received elements
+        int num_of_recv_elements = 0;
+        // number of processed elements
+        int num_of_processed_elements = 0;
+        // buffer for the received value
+        uint8_t recv_value;
+        // flag indicating that processing/printing of elements can be started
+        bool processing_started = false;
+        // minimal size of queue_0 to start processing the numbers
+        int min_num_of_elements_in_queue = (1 << (rank-1));
+        // MPI status of received messages
         MPI_Status status;
 
-        while (sent < num_of_elements) {
-
-            // compute the current tag
-            // tag = ((i & (1 << (rank-1))) ? 1 : 0);
+        // process all elements
+        while (num_of_processed_elements < num_of_elements) {
 
             // receive the message
-            if (recv != num_of_elements) {
-                // std::cout << rank << ": waiting for receive, " << queue_0->size() << ", " << queue_1->size() << std::endl;
-                MPI_Recv(&value, 1, MPI_BYTE, (rank-1), MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-                // std::cout << rank << ": received: " << static_cast<int>(value) << ", tag: " << status.MPI_TAG << std::endl;
-                recv++;
+            if (num_of_recv_elements != num_of_elements) {
+                MPI_Recv(&recv_value, 1, MPI_BYTE, (rank-1), MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+                num_of_recv_elements++;
 
-                // check the status -> find out the queue to store the value in
+                // check the message tag and push the value to the corresponding queue
                 if (status.MPI_TAG == PIPELINE_TAG_0) {
-                    queue_0->push(value);
+                    queue_0->push(recv_value);
                 } else {
-                    queue_1->push(value);
+                    queue_1->push(recv_value);
                 }
             }
-            // i++;
-
-            // save the value to the corresponding queue
-            // if (tag == PIPELINE_TAG_0) {
-            //     // save to the queue_0
-            //     MPI_Recv(&value, 1, MPI_BYTE, (rank-1), MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-            //     std::cout << rank << ": STATUS: " << status.MPI_TAG << std::endl;
-            //     queue_0->push(value);
-            //     i++;
-            // } 
-            // else {
-            //     // receive the value and save it to queue1
-            //     MPI_Recv(&value, 1, MPI_BYTE, (rank-1), MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-            //     std::cout << rank << ": STATUS: " << status.MPI_TAG << std::endl;
-            //     queue_1->push(value);
-            //     i++;
-            // }
-
-            // std::cout << rank << ": Inside the last rank: " << static_cast<int>(value) << ", queue_0->front(): " << static_cast<int>(queue_0->front()) <<  std::endl;
         
-            if (!set && (queue_0->size() >= (1 << (rank-1))) && (!queue_1->empty())) {
-                set = true;
+            // check if the processing of elements can be started
+            if (!processing_started &&
+                (queue_0->size() >= min_num_of_elements_in_queue) && (!queue_1->empty())) {
+                processing_started = true;  // indicates whether processing has begun
             } 
 
-            if (set) {
-                if (!queue_0->empty() && !queue_1->empty()) {
-                    if (queue_0->front() < queue_1->front()) {
-                        // to_be_send = queue_0->front();
-                        std::cout << static_cast<int>(queue_0->front()) << std::endl;
-                        queue_0->pop();
-                    } else {
-                        // to_be_send = queue_1->front();
-                        std::cout << static_cast<int>(queue_1->front()) << std::endl;
-                        queue_1->pop();
-                    }
-                } else if (!queue_0->empty()) {
-                    std::cout << static_cast<int>(queue_0->front()) << std::endl;
-                    queue_0->pop();
-                } else if (!queue_1->empty()) {
-                    std::cout << static_cast<int>(queue_1->front()) << std::endl;
-                    queue_1->pop();
-                }
-                sent++;
+            // if processing has started, print one element
+            if (processing_started) {
+                // print lower element
+                print_lower_number(queue_0, queue_1);
+                num_of_processed_elements++;
             }
         }
-
-        // std::cout << rank << ": the End" << std::endl;
+        // delete the queues
         delete queue_0;
         delete queue_1;
     }
 
+    // finalize MPI and return
     MPI_Finalize();
     return 0;
 }
